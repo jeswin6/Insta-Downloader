@@ -3,25 +3,34 @@ import { NavLink, Route, Routes } from 'react-router-dom'
 import { BarChart3, CalendarCheck2 } from 'lucide-react'
 import HabitsPage from './pages/HabitsPage'
 import AnalyticsPage from './pages/AnalyticsPage'
-import { createHabit, createInstancesForWeekdays, getHabits, loadAppData } from './utils/habitStorage'
+import { loadData, saveData } from './utils/habitStorage'
 
 export default function App() {
-  const [data, setData] = React.useState(() => loadAppData())
-
-  const refreshData = React.useCallback(() => {
-    setData(loadAppData())
-  }, [])
+  const [data, setData] = React.useState(() => {
+    const loaded = loadData()
+    if (loaded.habits.length) return loaded
+    return {
+      habits: [
+        { id: crypto.randomUUID(), name: 'Meditation', color: '#6366f1', label: 'Wellness', createdAt: new Date().toISOString() },
+        { id: crypto.randomUUID(), name: 'Spoken Practice', color: '#ef4444', label: 'Learning', createdAt: new Date().toISOString() },
+      ],
+      schedule: {},
+      completions: {},
+    }
+  })
 
   React.useEffect(() => {
-    const existing = getHabits()
-    if (existing.length) return
+    if (Object.keys(data.schedule).length === 0 && data.habits.length) {
+      setData((prev) => ({
+        ...prev,
+        schedule: prev.habits.reduce((acc, habit, idx) => ({ ...acc, [habit.id]: idx % 2 ? [1, 3, 5] : [0, 2, 4] }), {}),
+      }))
+    }
+  }, [data.habits, data.schedule])
 
-    const meditation = createHabit({ name: 'Meditation', color: '#6366f1', label: 'Wellness' })
-    const spoken = createHabit({ name: 'Spoken Practice', color: '#ef4444', label: 'Learning' })
-    createInstancesForWeekdays(meditation.id, [1, 3, 5])
-    createInstancesForWeekdays(spoken.id, [0, 2, 4])
-    refreshData()
-  }, [refreshData])
+  React.useEffect(() => {
+    saveData(data)
+  }, [data])
 
   return (
     <div className="min-h-screen bg-[radial-gradient(circle_at_top,#1e1b4b_0%,#020617_45%)] p-4 md:p-8">
@@ -35,7 +44,7 @@ export default function App() {
         </header>
 
         <Routes>
-          <Route path="/" element={<HabitsPage data={data} refreshData={refreshData} />} />
+          <Route path="/" element={<HabitsPage data={data} setData={setData} />} />
           <Route path="/analytics" element={<AnalyticsPage data={data} />} />
         </Routes>
       </div>

@@ -1,84 +1,69 @@
 import React from 'react'
 import { Plus, Target, Trophy, CheckCircle2 } from 'lucide-react'
+import { completionRate, getStreakForHabit } from '../utils/analyticsUtils'
+import { WEEK_DAYS, createHabit, getTodayDate } from '../utils/habitStorage'
 import HabitColumn from '../components/HabitColumn'
 import CreateHabitModal from '../components/CreateHabitModal'
-import HabitCard from '../components/HabitCard'
-import {
-  WEEK_DAYS,
-  createHabit,
-  createInstance,
-  createInstancesForWeekdays,
-  deleteHabit,
-  getWeekDates,
-  moveInstanceToDate,
-  toggleInstanceCompleted,
-} from '../utils/habitStorage'
-import { getHabitPerformance, getStreakForHabit, getWeeklyCompletion } from '../utils/analyticsUtils'
 
-export default function HabitsPage({ data, refreshData }) {
+export default function HabitsPage({ data, setData }) {
   const [openModal, setOpenModal] = React.useState(false)
-  const [habitToDelete, setHabitToDelete] = React.useState(null)
-
-  const weekDates = React.useMemo(() => getWeekDates(), [])
+  const todayDate = getTodayDate()
 
   const habitsMap = React.useMemo(() => Object.fromEntries(data.habits.map((habit) => [habit.id, habit])), [data.habits])
 
-  const habitsWithProgress = React.useMemo(
-    () => getHabitPerformance(data.habits, data.instances),
-    [data.habits, data.instances],
-  )
-
   const streaks = React.useMemo(
-    () => Object.fromEntries(data.habits.map((habit) => [habit.id, getStreakForHabit(habit.id, data.instances)])),
-    [data.habits, data.instances],
+    () => Object.fromEntries(data.habits.map((habit) => [habit.id, getStreakForHabit(habit.id, data.completions)])),
+    [data.habits, data.completions],
   )
 
-  const weekly = getWeeklyCompletion(data.instances)
-  const todayDate = new Date().toISOString().slice(0, 10)
-  const totalToday = data.instances.filter((item) => item.date === todayDate).length
-  const completedToday = data.instances.filter((item) => item.date === todayDate && item.completed).length
+  const board = React.useMemo(() => {
+    return WEEK_DAYS.map((_, dayIndex) => {
+      const items = []
+      data.habits.forEach((habit) => {
+        if ((data.schedule[habit.id] || []).includes(dayIndex)) {
+          items.push({ habitId: habit.id, dayIndex, date: todayDate, entryId: `${dayIndex}:${habit.id}` })
+        }
+      })
+      return items
+    })
+  }, [data.habits, data.schedule, todayDate])
+
+  const weeklyPct = completionRate(data.schedule, data.completions)
+  const todayIndex = new Date().getDay() === 0 ? 6 : new Date().getDay() - 1
+  const totalToday = board[todayIndex]?.length || 0
+  const completedToday = Object.keys(data.completions).filter((key) => key.endsWith(todayDate) && data.completions[key]).length
   const currentBest = Math.max(0, ...Object.values(streaks).map((s) => s.current))
 
-  const board = weekDates.map((date) => data.instances.filter((item) => item.date === date))
-
-  function handleCreateHabit(payload) {
+  function onCreate(payload) {
     const habit = createHabit(payload)
-    const weekdays = payload.weekdays?.length ? payload.weekdays : [1]
-    createInstancesForWeekdays(habit.id, weekdays)
+    setData((prev) => ({ ...prev, habits: [...prev.habits, habit], schedule: { ...prev.schedule, [habit.id]: [1] } }))
     setOpenModal(false)
-    refreshData()
   }
 
-  function handleToggle(instanceId, completed) {
-    toggleInstanceCompleted(instanceId, completed)
-    refreshData()
+  function toggleCompletion(habitId, date) {
+    const key = `${habitId}:${date}`
+    setData((prev) => ({ ...prev, completions: { ...prev.completions, [key]: !prev.completions[key] } }))
   }
 
-  function handleDropToDay({ type, habitId, instanceId, date }) {
-    if (type === 'habit' && habitId) {
-      const exists = data.instances.some((item) => item.habitId === habitId && item.date === date)
-      if (!exists) createInstance(habitId, date)
-      refreshData()
-      return
-    }
-
-    if (type === 'instance' && instanceId) {
-      moveInstanceToDate(instanceId, date)
-      refreshData()
-    }
-  }
-
-  function confirmDeleteHabit() {
-    if (!habitToDelete) return
-    deleteHabit(habitToDelete.id)
-    setHabitToDelete(null)
-    refreshData()
+  function onDropHabit(habitId, dayIndex) {
+    if (!habitId) return
+    setData((prev) => {
+      const current = prev.schedule[habitId] || []
+      if (current.includes(dayIndex)) return prev
+      return {
+        ...prev,
+        schedule: {
+          ...prev.schedule,
+          [habitId]: [...current, dayIndex].sort((a, b) => a - b),
+        },
+      }
+    })
   }
 
   return (
     <>
       <div className="mb-4 grid gap-4 md:grid-cols-4">
-        <StatCard icon={Target} title="Weekly completion" value={`${weekly.percent}%`} />
+        <StatCard icon={Target} title="Weekly completion" value={`${weeklyPct}%`} />
         <StatCard icon={CheckCircle2} title="Completed today" value={`${completedToday}/${totalToday}`} />
         <StatCard icon={Plus} title="Total habits" value={data.habits.length} />
         <StatCard icon={Trophy} title="Current best streak" value={`${currentBest} days`} />
@@ -91,48 +76,23 @@ export default function HabitsPage({ data, refreshData }) {
         </button>
       </div>
 
-      <div className="mb-5 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-        {habitsWithProgress.map((habit) => (
-          <HabitCard
-            key={habit.id}
-            habit={habit}
-            progress={habit.percent}
-            streak={streaks[habit.id]}
-            onDelete={(selected) => setHabitToDelete(selected)}
-          />
-        ))}
-      </div>
-
       <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
         {WEEK_DAYS.map((day, dayIndex) => (
           <HabitColumn
             key={day}
+            dayIndex={dayIndex}
             title={day}
-            dayDate={weekDates[dayIndex]}
-            instances={board[dayIndex]}
+            items={board[dayIndex]}
             habitsMap={habitsMap}
-            onToggle={handleToggle}
-            onDropToDay={handleDropToDay}
+            completions={data.completions}
+            onToggle={toggleCompletion}
+            onDropHabit={onDropHabit}
+            streaks={streaks}
           />
         ))}
       </div>
 
-      <CreateHabitModal open={openModal} onClose={() => setOpenModal(false)} onCreate={handleCreateHabit} />
-
-      {habitToDelete && (
-        <div className="fixed inset-0 z-50 grid place-items-center bg-black/60 p-4">
-          <div className="panel w-full max-w-md p-5">
-            <h3 className="mb-2 text-lg font-bold">Delete habit?</h3>
-            <p className="mb-4 text-sm text-slate-300">
-              This will remove <span className="font-semibold">{habitToDelete.name}</span> and all of its scheduled instances.
-            </p>
-            <div className="grid grid-cols-2 gap-3">
-              <button onClick={() => setHabitToDelete(null)} className="rounded-lg border border-slate-700 py-2">Cancel</button>
-              <button onClick={confirmDeleteHabit} className="rounded-lg bg-rose-600 py-2 font-semibold">Delete</button>
-            </div>
-          </div>
-        </div>
-      )}
+      <CreateHabitModal open={openModal} onClose={() => setOpenModal(false)} onCreate={onCreate} />
     </>
   )
 }

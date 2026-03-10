@@ -1,84 +1,114 @@
-import { getWeekDates, toDateKey, WEEK_DAYS } from './habitStorage'
+import { getDayIndex, WEEK_DAYS } from './habitStorage'
 
-export function getWeeklyCompletion(instances, date = new Date()) {
-  const weekSet = new Set(getWeekDates(date))
-  const weekly = instances.filter((item) => weekSet.has(item.date))
-  const completed = weekly.filter((item) => item.completed).length
-  const total = weekly.length
-  return {
-    completed,
-    total,
-    percent: total ? Math.round((completed / total) * 100) : 0,
+export function completionRate(schedule, completions, date = new Date()) {
+  const monday = getMonday(date)
+  let total = 0
+  let done = 0
+
+  for (let i = 0; i < 7; i += 1) {
+    const current = new Date(monday)
+    current.setDate(monday.getDate() + i)
+    const dateKey = current.toISOString().slice(0, 10)
+    const dayIndex = i
+
+    Object.entries(schedule).forEach(([habitId, days]) => {
+      if (days?.includes(dayIndex)) {
+        total += 1
+        if (completions[`${habitId}:${dateKey}`]) done += 1
+      }
+    })
   }
+
+  return total ? Math.round((done / total) * 100) : 0
 }
 
-export function getHabitWeeklyPercent(habitId, instances, date = new Date()) {
-  const weekSet = new Set(getWeekDates(date))
-  const weekly = instances.filter((item) => item.habitId === habitId && weekSet.has(item.date))
-  if (!weekly.length) return 0
-  const completed = weekly.filter((item) => item.completed).length
-  return Math.round((completed / weekly.length) * 100)
-}
+export function dailyCounts(schedule, completions, date = new Date()) {
+  const monday = getMonday(date)
+  return WEEK_DAYS.map((name, i) => {
+    const current = new Date(monday)
+    current.setDate(monday.getDate() + i)
+    const dateKey = current.toISOString().slice(0, 10)
 
-export function getDailyChartData(instances, date = new Date()) {
-  const weekDates = getWeekDates(date)
-  return WEEK_DAYS.map((day, index) => {
-    const dayItems = instances.filter((item) => item.date === weekDates[index])
-    return {
-      day: day.slice(0, 3),
-      scheduled: dayItems.length,
-      completed: dayItems.filter((item) => item.completed).length,
-    }
+    let scheduled = 0
+    let completed = 0
+    Object.entries(schedule).forEach(([habitId, days]) => {
+      if (days?.includes(i)) {
+        scheduled += 1
+        if (completions[`${habitId}:${dateKey}`]) completed += 1
+      }
+    })
+
+    return { day: name.slice(0, 3), scheduled, completed }
   })
 }
 
-export function getHabitPerformance(habits, instances, date = new Date()) {
+export function habitStats(habits, schedule, completions) {
   return habits.map((habit) => {
-    const percent = getHabitWeeklyPercent(habit.id, instances, date)
-    const totalCompleted = instances.filter((item) => item.habitId === habit.id && item.completed).length
-    return { ...habit, percent, totalCompleted }
+    const days = schedule[habit.id] || []
+    let total = 0
+    let done = 0
+
+    Object.entries(completions).forEach(([key, completed]) => {
+      if (!completed) return
+      const [habitId, date] = key.split(':')
+      if (habitId !== habit.id) return
+      if (days.includes(getDayIndex(date))) done += 1
+    })
+
+    total = days.length * 4 || 1
+    const rate = Math.round((done / total) * 100)
+    return { ...habit, rate, completedCount: done }
   })
 }
 
-export function getStreakForHabit(habitId, instances) {
-  const completedDates = instances
-    .filter((item) => item.habitId === habitId && item.completed)
-    .map((item) => item.date)
+export function getStreakForHabit(habitId, completions) {
+  const entries = Object.entries(completions)
+    .filter(([key, value]) => value && key.startsWith(`${habitId}:`))
+    .map(([key]) => key.split(':')[1])
     .sort()
 
-  if (!completedDates.length) return { current: 0, longest: 0 }
+  if (!entries.length) return { current: 0, longest: 0 }
 
   let longest = 1
-  let run = 1
+  let current = 1
+  let running = 1
 
-  for (let i = 1; i < completedDates.length; i += 1) {
-    const prev = new Date(`${completedDates[i - 1]}T00:00:00`)
-    const now = new Date(`${completedDates[i]}T00:00:00`)
-    const diff = Math.round((now - prev) / (1000 * 60 * 60 * 24))
+  for (let i = 1; i < entries.length; i += 1) {
+    const prev = new Date(`${entries[i - 1]}T00:00:00`)
+    const now = new Date(`${entries[i]}T00:00:00`)
+    const diff = Math.floor((now - prev) / (1000 * 60 * 60 * 24))
     if (diff === 1) {
-      run += 1
-      longest = Math.max(longest, run)
+      running += 1
+      longest = Math.max(longest, running)
     } else if (diff > 1) {
-      run = 1
+      running = 1
     }
   }
 
-  const today = new Date(`${toDateKey(new Date())}T00:00:00`)
-  const latest = new Date(`${completedDates[completedDates.length - 1]}T00:00:00`)
-  const lag = Math.round((today - latest) / (1000 * 60 * 60 * 24))
-  const current = lag <= 1 ? run : 0
+  const today = new Date()
+  const latest = new Date(`${entries[entries.length - 1]}T00:00:00`)
+  const diffFromToday = Math.floor((today - latest) / (1000 * 60 * 60 * 24))
+  current = diffFromToday <= 1 ? running : 0
 
   return { current, longest }
 }
 
-export function getMonthlyHeatmap(instances, span = 30) {
-  const data = []
-  for (let i = span - 1; i >= 0; i -= 1) {
+export function monthlyHeatmapData(completions) {
+  const days = []
+  for (let i = 29; i >= 0; i -= 1) {
     const date = new Date()
     date.setDate(date.getDate() - i)
-    const key = toDateKey(date)
-    const count = instances.filter((item) => item.date === key && item.completed).length
-    data.push({ date: key, count })
+    const key = date.toISOString().slice(0, 10)
+    const count = Object.entries(completions).filter(([entryKey, done]) => done && entryKey.endsWith(key)).length
+    days.push({ date: key, count })
   }
-  return data
+  return days
+}
+
+function getMonday(date) {
+  const current = new Date(date)
+  const day = current.getDay() || 7
+  if (day !== 1) current.setHours(-24 * (day - 1))
+  current.setHours(0, 0, 0, 0)
+  return current
 }

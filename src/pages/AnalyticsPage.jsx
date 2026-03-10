@@ -1,13 +1,12 @@
-import React from 'react'
 import AnalyticsCharts from '../components/AnalyticsCharts'
-import { getDailyChartData, getHabitPerformance, getMonthlyHeatmap, getStreakForHabit, getWeeklyCompletion } from '../utils/analyticsUtils'
+import { dailyCounts, habitStats, monthlyHeatmapData } from '../utils/analyticsUtils'
 
 export default function AnalyticsPage({ data }) {
-  const weekData = getDailyChartData(data.instances)
-  const stats = getHabitPerformance(data.habits, data.instances)
-  const mostConsistent = [...stats].sort((a, b) => b.percent - a.percent)[0]
-  const leastCompleted = [...stats].sort((a, b) => a.percent - b.percent)[0]
-  const heatmap = getMonthlyHeatmap(data.instances)
+  const weekData = dailyCounts(data.schedule, data.completions)
+  const stats = habitStats(data.habits, data.schedule, data.completions)
+  const mostConsistent = [...stats].sort((a, b) => b.rate - a.rate)[0]
+  const leastCompleted = [...stats].sort((a, b) => a.rate - b.rate)[0]
+  const heatmap = monthlyHeatmapData(data.completions)
 
   const categoryMap = data.habits.reduce((acc, habit) => {
     const label = habit.label || 'No Label'
@@ -16,18 +15,17 @@ export default function AnalyticsPage({ data }) {
   }, {})
   const categoryData = Object.entries(categoryMap).map(([name, value]) => ({ name, value }))
 
-  const weekly = getWeeklyCompletion(data.instances)
-  const totalCompleted = data.instances.filter((item) => item.completed).length
+  const totalCompleted = Object.values(data.completions).filter(Boolean).length
   const avgCompletion = weekData.reduce((acc, day) => acc + (day.scheduled ? day.completed / day.scheduled : 0), 0) / 7
-  const longest = Math.max(0, ...data.habits.map((habit) => getStreakForHabit(habit.id, data.instances).longest))
+  const longest = Math.max(0, ...stats.map((item) => item.completedCount))
 
   return (
     <div className="space-y-5">
       <div className="grid gap-4 md:grid-cols-4">
-        <Metric title="Weekly Completion Rate" value={`${weekly.percent}%`} />
+        <Metric title="Weekly Completion Rate" value={`${Math.round(avgCompletion * 100)}%`} />
         <Metric title="Most Consistent Habit" value={mostConsistent?.name || '-'} />
         <Metric title="Least Completed Habit" value={leastCompleted?.name || '-'} />
-        <Metric title="Total Instances Completed" value={totalCompleted} />
+        <Metric title="Total Habits Completed" value={totalCompleted} />
       </div>
 
       <AnalyticsCharts weekData={weekData} categoryData={categoryData.length ? categoryData : [{ name: 'None', value: 1 }]} />
